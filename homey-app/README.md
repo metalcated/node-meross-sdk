@@ -48,13 +48,15 @@ temporary SSH tunnel closes when the script exits.
    expired code can be retried within the modal.
 4. Select the discovered MSG100 and complete pairing.
 
-The app provides Homey's garage-door open/close control and reported open/closed
-state, including the standard garage-door Flow cards. Each command waits up to
-45 seconds for the opener to report the requested position. Acknowledgment alone
-does not establish that the door has finished moving; state comes from the
-reported position. Unconfirmed commands report a failure and are not automatically
-resent. An already satisfied request does not pulse the opener again. Unknown
-position, an offline opener, or an expired session
+Version **0.1.2** provides a read-only **Door: Closed / Open** sensor and separate
+**Open** and **Close** buttons. Device tiles have no quick action, so opening the
+device panel does not operate the door. A button completes when the opener
+acknowledges the command. Door status continues to come from the physical contact
+sensor; accepting a command never changes the reported position by itself. The
+app monitors the requested position for up to 45 seconds, warns if it cannot be
+confirmed, and does not automatically resend the command. Another command is
+blocked while this check is in progress. An already satisfied request does not
+pulse the opener again. Unknown position, an offline opener, or an expired session
 leaves the device unavailable. The SDK uses local HTTP where available, with
 cloud MQTT fallback. Sign-in and initial discovery require the Meross cloud.
 
@@ -69,13 +71,21 @@ Homey explicitly opts into an MSG100-only state polling profile that requests
 System.All and GarageDoor.State channel 0, the read forms verified on the target
 unit. It does not use the unverified all-channel sentinel or optional configuration
 queries. Other SDK users keep the default polling policy unless they opt in.
-The device ID, capability, Flow cards, account records, and MFA behavior are
-preserved; reinstalling this update does not require pairing again.
+Existing devices gain the new controls on startup without pairing again. Device
+identity, account records, MFA behavior, and the original `garagedoor_closed`
+capability, Flow cards, tags, and history are preserved. Its toggle is hidden from
+the device UI. Existing standard garage-door Flow actions retain their original
+behavior: they wait for acknowledgment and the reported target position. New
+**Open the garage door** and **Close the garage door** app Flow cards complete on
+acknowledgment, just like the new buttons; their completion does not establish
+that movement has finished. Read **Door** or use the existing reported-position
+Flow conditions and triggers when later actions depend on the contact state.
 
 Command diagnostics record the failing phase, elapsed time, error code, and stack
 frames without raw response bodies, credentials, or account identifiers. The
-status-refresh defect is covered by regression tests. Elimination of the observed
-10-second live error still requires a command check on Homey after the update.
+status-refresh defect, control/status separation, and capability migration are
+covered by regression tests. The updated layout and elimination of the observed
+10-second live error still require checking on Homey after the update.
 
 Homey's persistent app settings hold only the Meross session token and account
 metadata. Passwords and authenticator codes are not persisted, logged, or stored

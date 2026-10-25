@@ -78,8 +78,14 @@ function deviceHarness(initial = endpoint(), overrides = {}) {
     class Device {
         getData() { return descriptor().data; }
         getStore() { return descriptor().store; }
-        registerCapabilityListener(name, fn) { this.control = fn; }
-        async setCapabilityValue(name, value) { this.capability = value; calls.push({ type: 'state', value }); }
+        hasCapability() { return true; }
+        getCapabilityOptions(name) { return require('../app.json').drivers[0].capabilitiesOptions[name] || {}; }
+        async setCapabilityOptions() {}
+        async unsetWarning() {}
+        registerCapabilityListener(name, fn) { if (name === garage.CAPABILITY) this.control = fn; }
+        async setCapabilityValue(name, value) {
+            if (name === garage.CAPABILITY) { this.capability = value; calls.push({ type: 'state', value }); }
+        }
         async setAvailable() { this.available = true; }
         async setUnavailable(reason) { this.available = false; this.reason = reason; }
         error() { calls.push({ type: 'error' }); }

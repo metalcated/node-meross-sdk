@@ -11,6 +11,12 @@ class MerossConnectApp extends Homey.App {
             settings: this.homey.settings,
             warn: message => this.error(message)
         });
+        this.homey.flow.getActionCard('garage_open').registerRunListener(async ({ device }) => {
+            await device.requestClosed(false);
+        });
+        this.homey.flow.getActionCard('garage_close').registerRunListener(async ({ device }) => {
+            await device.requestClosed(true);
+        });
         this.log('Meross Connect initialized. Saved sessions are restored when devices start.');
     }
 

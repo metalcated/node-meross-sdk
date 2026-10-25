@@ -1,7 +1,10 @@
 'use strict';
 
 const Homey = require('homey');
-const { CAPABILITY, identity, closedValue, requireGarage, friendlyError } = require('../../lib/garage');
+const {
+    CAPABILITY, STATE_CAPABILITY, OPEN_CAPABILITY, CLOSE_CAPABILITY, DEVICE_CAPABILITIES,
+    identity, closedValue, requireGarage, friendlyError
+} = require('../../lib/garage');
 const { safeCode } = require('../../lib/accounts');
 
 const RETRY_MS = 60000;
@@ -21,8 +24,26 @@ class Msg100Device extends Homey.Device {
         this._generation = 0;
         this._stateQueue = Promise.resolve();
         this._authenticationRequired = false;
+        this._clearWarningOnFreshState = true;
         this._identity = identity(this.getData(), this.getStore());
         this._accounts = this.homey.app.accounts;
+        // Existing paired openers keep their legacy identity and Flow capability.
+        // Add the separate reported status and stateless buttons in place.
+        for (const capability of DEVICE_CAPABILITIES) {
+            if (!this.hasCapability(capability)) await this.addCapability(capability);
+            if (this._closed) return;
+        }
+        for (const [capability, options] of [
+            [CAPABILITY, { uiComponent: null, uiQuickAction: false }],
+            [OPEN_CAPABILITY, { uiQuickAction: false }],
+            [CLOSE_CAPABILITY, { uiQuickAction: false }]
+        ]) {
+            const current = this.getCapabilityOptions(capability) || {};
+            if (Object.entries(options).some(([key, value]) => current[key] !== value)) {
+                await this.setCapabilityOptions(capability, { ...current, ...options });
+            }
+            if (this._closed) return;
+        }
         this._sessionChanged = account => {
             if ((typeof account === 'string' ? account : account?.accountId) === this._identity.accountId) {
                 this._authenticationRequired = false;
@@ -42,6 +63,8 @@ class Msg100Device extends Homey.Device {
         this._accounts.on('session', this._sessionChanged);
         this._accounts.on('authentication', this._authenticationChanged);
         this.registerCapabilityListener(CAPABILITY, value => this.writeClosed(value));
+        this.registerCapabilityListener(OPEN_CAPABILITY, () => this.requestClosed(false));
+        this.registerCapabilityListener(CLOSE_CAPABILITY, () => this.requestClosed(true));
         await this.reconnectAccount();
     }
 
@@ -73,6 +96,14 @@ class Msg100Device extends Homey.Device {
         return this._queueUpdate(generation, async () => {
             if (closed !== undefined) await this.setCapabilityValue(CAPABILITY, closed);
             if (!this._current(generation)) return;
+            if (closed !== undefined) await this.setCapabilityValue(STATE_CAPABILITY, closed ? 'closed' : 'open');
+            if (!this._current(generation)) return;
+            if (closed !== undefined && (this._clearWarningOnFreshState || this._doorWarning?.closed === closed)) {
+                this._clearWarningOnFreshState = false;
+                this._doorWarning = null;
+                try { await this.unsetWarning(); } catch { this.error('Could not clear the garage-door warning.'); }
+                if (!this._current(generation)) return;
+            }
             if (!endpoint.isOnline()) await this.setUnavailable('The MSG100 is offline. Check its power and Wi-Fi connection.');
             else if (typeof this._reported !== 'boolean') await this.setUnavailable('Waiting for the MSG100 to report its door position.');
             else {
@@ -156,7 +187,39 @@ class Msg100Device extends Homey.Device {
         for (const frame of frames) this.error(frame);
     }
 
-    async writeClosed(closed) {
+    writeClosed(closed) {
+        return this._controlClosed(closed, false);
+    }
+
+    /** Buttons acknowledge acceptance; reported state continues independently. */
+    requestClosed(closed) {
+        return this._controlClosed(closed, true);
+    }
+
+    _publicCommandError(stage, error) {
+        if (error?.[PUBLIC_MESSAGE]) return error;
+        const message = stage === 'position read'
+            ? 'Could not read the current MSG100 door position. Check its connection and try again.'
+            : 'The MSG100 command failed before its position was confirmed. Check the reported door position before trying again.';
+        const publicError = new Error(message);
+        publicError.code = safeCode(error);
+        return publicError;
+    }
+
+    async _backgroundCommandWarning(generation, closed) {
+        if (!this._current(generation)) return;
+        try {
+            await this._queueUpdate(generation, async () => {
+                if (this._reported === closed) return;
+                this._doorWarning = { closed };
+                await this.setWarning('The MSG100 accepted the command but did not confirm the requested door position. Check the door before trying again.');
+            });
+        } catch {
+            this.error('Could not display the garage-door confirmation warning.');
+        }
+    }
+
+    async _controlClosed(closed, acknowledgeOnly) {
         if (typeof closed !== 'boolean') throw new Error('Choose whether to open or close the garage door.');
         const endpoint = this._endpoint;
         const generation = this._generation;
@@ -169,6 +232,8 @@ class Msg100Device extends Homey.Device {
         let confirmation;
         let wireSettled = true;
         let finished = false;
+        let acknowledged = false;
+        let completion;
         let stage = 'position read';
         const started = Date.now();
         const release = () => {
@@ -188,9 +253,16 @@ class Msg100Device extends Homey.Device {
                 return closed ? garage.close() : garage.open();
             }).then(value => {
                 wireSettled = true;
+                acknowledged = true;
                 stage = 'position confirmation';
                 this.log?.(`MSG100 command acknowledged after ${Date.now() - started}ms; waiting for reported position.`);
                 confirmation.acknowledge();
+                if (this._doorWarning) {
+                    void this._queueUpdate(generation, async () => {
+                        this._doorWarning = null;
+                        try { await this.unsetWarning(); } catch { this.error('Could not clear the garage-door warning.'); }
+                    }).catch(() => this.error('Could not update the garage-door warning.'));
+                }
                 release();
                 return value;
             }, error => {
@@ -198,33 +270,52 @@ class Msg100Device extends Homey.Device {
                 release();
                 throw error;
             });
-            // Observe reports before sending: a fast PUSH may arrive before SETACK.
-            // Promise.all also observes a late wire rejection after cancellation.
-            await Promise.all([command, confirmation.promise]);
-            if (!this._current(generation)) throw positionError('The connection changed while sending the command. Check the reported door position.');
-            const reported = garage.values();
-            if (!endpoint.isOnline() || closedValue(reported) !== closed) {
-                throw positionError('The door position changed before the command was confirmed. Check the door before trying again.');
-            }
-            // Homey can apply the requested value after this listener resolves.
-            // Resolve only once that value agrees with the opener's actual report.
-            await this._reportedChange(generation, endpoint, reported);
-            if (!this._current(generation) || !endpoint.isOnline() || closedValue(garage.values()) !== closed) {
-                throw positionError('The connection or door position changed before confirmation completed. Check the door before trying again.');
+            completion = (async () => {
+                try {
+                    // Observe reports before sending: a fast PUSH may arrive before SETACK.
+                    // Promise.all also observes a late wire rejection after cancellation.
+                    await Promise.all([command, confirmation.promise]);
+                    if (!this._current(generation)) throw positionError('The connection changed while sending the command. Check the reported door position.');
+                    const reported = garage.values();
+                    if (!endpoint.isOnline() || closedValue(reported) !== closed) {
+                        throw positionError('The door position changed before the command was confirmed. Check the door before trying again.');
+                    }
+                    // Hidden legacy controls and Flows still wait for the real contact state.
+                    await this._reportedChange(generation, endpoint, reported);
+                    if (!this._current(generation) || !endpoint.isOnline() || closedValue(garage.values()) !== closed) {
+                        throw positionError('The connection or door position changed before confirmation completed. Check the door before trying again.');
+                    }
+                } catch (error) {
+                    this._commandFailure(stage, error, started);
+                    throw this._publicCommandError(stage, error);
+                } finally {
+                    confirmation.cleanup();
+                    finished = true;
+                    release();
+                }
+            })();
+            // An acknowledged button no longer has a waiting UI caller, but this
+            // observer retains cleanup and reports a later confirmation failure.
+            void completion.catch(() => {
+                if (acknowledgeOnly && acknowledged && this._current(generation)) {
+                    return this._backgroundCommandWarning(generation, closed);
+                }
+                return undefined;
+            });
+            if (!acknowledgeOnly) return await completion;
+            await Promise.race([command, completion]);
+            if (!this._current(generation) || !endpoint.isOnline()) {
+                throw positionError('The connection changed after the MSG100 accepted the command. Check its reported door position.');
             }
         } catch (error) {
-            this._commandFailure(stage, error, started);
-            if (error?.[PUBLIC_MESSAGE]) throw error;
-            const message = stage === 'position read'
-                ? 'Could not read the current MSG100 door position. Check its connection and try again.'
-                : 'The MSG100 command failed before its position was confirmed. Check the reported door position before trying again.';
-            const publicError = new Error(message);
-            publicError.code = safeCode(error);
-            throw publicError;
+            if (!completion) this._commandFailure(stage, error, started);
+            throw this._publicCommandError(stage, error);
         } finally {
-            confirmation?.cleanup();
-            finished = true;
-            release();
+            if (!completion) {
+                confirmation?.cleanup();
+                finished = true;
+                release();
+            }
         }
     }
 
@@ -303,14 +394,14 @@ class Msg100Device extends Homey.Device {
         if (this._closed) return;
         this._closed = true;
         this._generation++;
-        this._accounts?.off('session', this._sessionChanged);
-        this._accounts?.off('authentication', this._authenticationChanged);
+        if (this._sessionChanged) this._accounts?.off('session', this._sessionChanged);
+        if (this._authenticationChanged) this._accounts?.off('authentication', this._authenticationChanged);
         if (this._retryTimer) this.homey.clearTimeout(this._retryTimer);
         this._retryTimer = null;
         this._detach();
         await this._binding?.catch(() => {});
         await this._stateQueue?.catch(() => {});
-        if (this._identity && !this._accounts.closed) {
+        if (this._identity && this._accounts && !this._accounts.closed) {
             const { accountId, uuid, ownerId } = this._identity;
             await this._accounts.releaseEndpoint(accountId, uuid, ownerId);
         }

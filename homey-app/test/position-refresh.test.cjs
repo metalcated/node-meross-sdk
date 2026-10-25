@@ -74,14 +74,18 @@ function harness(initial = endpoint()) {
     class HomeyDevice {
         getData() { return descriptor.data; }
         getStore() { return descriptor.store; }
+        hasCapability() { return true; }
+        getCapabilityOptions(name) { return require('../app.json').drivers[0].capabilitiesOptions[name] || {}; }
+        async setCapabilityOptions() {}
+        async unsetWarning() {}
         registerCapabilityListener(name, listener) {
-            assert.equal(name, CAPABILITY);
-            this.control = listener;
+            if (name === CAPABILITY) this.control = listener;
         }
         async setCapabilityValue(name, state) {
-            assert.equal(name, CAPABILITY);
-            this.capability = state;
-            calls.push({ type: 'position', state });
+            if (name === CAPABILITY) {
+                this.capability = state;
+                calls.push({ type: 'position', state });
+            }
         }
         async setAvailable() { this.available = true; }
         async setUnavailable(reason) { this.available = false; this.reason = reason; }

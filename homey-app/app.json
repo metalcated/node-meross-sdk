@@ -1,6 +1,6 @@
 {
   "id": "com.metalcated.meross",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "compatibility": ">=13.0.0",
   "runtime": "nodejs",
   "sdk": 3,
@@ -11,6 +11,19 @@
   "brandColor": "#147D73",
   "author": { "name": "metalcated" },
   "permissions": [],
+  "capabilities": {
+    "garage_door_state": {
+      "type": "enum",
+      "title": { "en": "Door" },
+      "getable": true,
+      "setable": false,
+      "uiComponent": "sensor",
+      "values": [
+        { "id": "closed", "title": { "en": "Closed" } },
+        { "id": "open", "title": { "en": "Open" } }
+      ]
+    }
+  },
   "drivers": [
     {
       "id": "msg100",
@@ -18,7 +31,12 @@
       "class": "garagedoor",
       "platforms": ["local"],
       "connectivity": ["lan", "cloud"],
-      "capabilities": ["garagedoor_closed"],
+      "capabilities": ["garage_door_state", "button.open", "button.close", "garagedoor_closed"],
+      "capabilitiesOptions": {
+        "garagedoor_closed": { "uiComponent": null, "uiQuickAction": false },
+        "button.open": { "title": { "en": "Open" }, "uiQuickAction": false },
+        "button.close": { "title": { "en": "Close" }, "uiQuickAction": false }
+      },
       "pair": [
         { "id": "connect", "navigation": { "next": "list_devices" } },
         { "id": "list_devices", "template": "list_devices", "navigation": { "next": "add_devices" } },
@@ -26,5 +44,21 @@
       ],
       "repair": [{ "id": "connect" }]
     }
-  ]
+  ],
+  "flow": {
+    "actions": [
+      {
+        "id": "garage_open",
+        "title": { "en": "Open the garage door" },
+        "hint": { "en": "Completes when the opener accepts the command. Check Door for the reported position." },
+        "args": [{ "name": "device", "type": "device", "filter": "driver_id=msg100" }]
+      },
+      {
+        "id": "garage_close",
+        "title": { "en": "Close the garage door" },
+        "hint": { "en": "Completes when the opener accepts the command. Check Door for the reported position." },
+        "args": [{ "name": "device", "type": "device", "filter": "driver_id=msg100" }]
+      }
+    ]
+  }
 }

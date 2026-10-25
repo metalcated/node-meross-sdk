@@ -1,6 +1,10 @@
 'use strict';
 
 const CAPABILITY = 'garagedoor_closed';
+const STATE_CAPABILITY = 'garage_door_state';
+const OPEN_CAPABILITY = 'button.open';
+const CLOSE_CAPABILITY = 'button.close';
+const DEVICE_CAPABILITIES = Object.freeze([STATE_CAPABILITY, OPEN_CAPABILITY, CLOSE_CAPABILITY, CAPABILITY]);
 
 function isMsg100(model) {
     return typeof model === 'string' && /^msg100(?:[a-z-][a-z0-9-]*)?$/i.test(model.trim());
@@ -18,7 +22,7 @@ function pairingDevice(accountId, row, physical) {
         name: physical.name || row.name || 'MSG100 garage door',
         data: { id: `${accountId}:${row.id}` },
         store: { accountId, uuid: physical.uuid, endpointId: row.id },
-        capabilities: [CAPABILITY]
+        capabilities: [...DEVICE_CAPABILITIES]
     };
 }
 
@@ -73,4 +77,5 @@ function requireGarage(endpoint) {
     return endpoint.cover;
 }
 
-module.exports = { CAPABILITY, isMsg100, pairingDevice, identity, credentials, loginChallenge, friendlyError, closedValue, requireGarage };
+module.exports = { CAPABILITY, STATE_CAPABILITY, OPEN_CAPABILITY, CLOSE_CAPABILITY, DEVICE_CAPABILITIES,
+    isMsg100, pairingDevice, identity, credentials, loginChallenge, friendlyError, closedValue, requireGarage };

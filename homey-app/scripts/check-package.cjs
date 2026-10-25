@@ -83,8 +83,22 @@ async function main() {
             const entries = archiveEntries(archive);
             const files = [...entries.keys()];
             for (const required of ['app.json', 'app.js', 'assets/icon.svg', 'LICENSE',
-                'node_modules/node-meross-sdk/dist/index.js', 'node_modules/mqtt/package.json']) {
+                'lib/garage.js', 'lib/accounts.js', 'node_modules/node-meross-sdk/dist/index.js', 'node_modules/mqtt/package.json']) {
                 assert(entries.has(required), `Missing runtime file: ${required}`);
+            }
+            const shippedManifest = JSON.parse(entries.get('app.json').toString());
+            const garageDriver = shippedManifest.drivers.find(driver => driver.id === 'msg100');
+            assert(garageDriver, 'The packaged MSG100 driver is missing');
+            for (const capability of ['garage_door_state', 'button.open', 'button.close', 'garagedoor_closed']) {
+                assert(garageDriver.capabilities.includes(capability), `The packaged garage capability is missing: ${capability}`);
+            }
+            assert.equal(shippedManifest.capabilities.garage_door_state.setable, false, 'The packaged door sensor must be read-only');
+            assert.equal(garageDriver.capabilitiesOptions.garagedoor_closed.uiComponent, null, 'The packaged legacy toggle must stay hidden');
+            for (const capability of ['garagedoor_closed', 'button.open', 'button.close']) {
+                assert.equal(garageDriver.capabilitiesOptions[capability].uiQuickAction, false, 'The package must disable garage tile quick actions');
+            }
+            for (const id of ['garage_open', 'garage_close']) {
+                assert(shippedManifest.flow.actions.some(action => action.id === id), `The packaged Flow action is missing: ${id}`);
             }
             for (const driver of manifest.drivers) {
                 for (const kind of ['pair', 'repair']) {
