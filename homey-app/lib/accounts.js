@@ -3,6 +3,7 @@
 const { EventEmitter } = require('node:events');
 
 const SETTINGS_KEY = 'meross_accounts_v1';
+const SESSION_OPTIONS = Object.freeze({ garageStatePolling: true });
 
 function failure(code, message) {
     const error = new Error(message);
@@ -84,7 +85,7 @@ class Accounts extends EventEmitter {
         if (!record) throw failure('ACCOUNT_MISSING', 'Sign in again using Repair.');
         let session;
         try {
-            session = this.Session.restore(record.token);
+            session = this.Session.restore(record.token, SESSION_OPTIONS);
         } catch {
             throw failure('TOKEN_EXPIRED', 'Sign in again using Repair.');
         }
@@ -123,7 +124,7 @@ class Accounts extends EventEmitter {
             let persisted = false;
             const previousRecords = new Map(this.records);
             try {
-                candidate = await this.Session.login({ email, password, ...(mfaCode ? { mfaCode } : {}) });
+                candidate = await this.Session.login({ email, password, ...(mfaCode ? { mfaCode } : {}) }, SESSION_OPTIONS);
                 this.check(isCurrent);
                 const token = copyToken(candidate.getToken());
                 const accountId = token.userId;

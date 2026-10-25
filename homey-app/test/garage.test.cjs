@@ -59,6 +59,7 @@ function endpoint(open = false) {
     value.cover = {
         kind: 'garage',
         values: () => typeof value.report === 'boolean' ? { open: value.report } : {},
+        async poll() { return this.values(); },
         async open() { value.commands.push('open'); return { open: value.report }; },
         async close() { value.commands.push('close'); return { open: value.report }; }
     };
@@ -217,7 +218,7 @@ test('device seeds reported position without commands and waits for real state w
     await device.control(false);
     assert.deepEqual(ep.commands, ['open'], 'an already open door must not receive another pulse');
     ep.cover.close = async () => { throw new Error('rejected command'); };
-    await assert.rejects(device.control(true), /rejected command/);
+    await assert.rejects(device.control(true), /command failed/);
     assert.equal(device.capability, false);
     assert.equal(timers.size, 0, 'a rejected command removes its confirmation timer');
     await device.onDeleted();

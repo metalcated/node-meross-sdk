@@ -39,7 +39,7 @@ function savedRecord(savedToken = token()) {
 }
 
 function fixture({ saved, plans = [], restorePlans = [] } = {}) {
-    const calls = { login: [], restore: [], settings: [] };
+    const calls = { login: [], restore: [], loginOptions: [], restoreOptions: [], settings: [] };
     const sessions = [];
     const warnings = [];
     const data = new Map(saved ? [[SETTINGS_KEY, structuredClone(saved)]] : []);
@@ -112,15 +112,17 @@ function fixture({ saved, plans = [], restorePlans = [] } = {}) {
     }
 
     const Session = {
-        async login(credentials) {
+        async login(credentials, options) {
             calls.login.push({ ...credentials });
+            calls.loginOptions.push(structuredClone(options));
             const plan = plans.shift() || {};
             await plan.loginGate;
             if (plan.loginError) throw plan.loginError;
             return new FakeSession(plan.token || token(), plan);
         },
-        restore(savedToken) {
+        restore(savedToken, options) {
             calls.restore.push(structuredClone(savedToken));
+            calls.restoreOptions.push(structuredClone(options));
             const plan = restorePlans.shift() || {};
             if (plan.restoreError) throw plan.restoreError;
             return new FakeSession(savedToken, plan);
@@ -133,6 +135,15 @@ function fixture({ saved, plans = [], restorePlans = [] } = {}) {
 function signIn(accounts, mfaCode, options) {
     return accounts.login({ email: EMAIL, password: PASSWORD, ...(mfaCode ? { mfaCode } : {}) }, options);
 }
+
+test('new and restored Homey sessions opt into the MSG100 state-only polling profile', async t => {
+    const f = fixture({ saved: savedRecord() });
+    t.after(() => f.accounts.close());
+    await f.accounts.listDevices(ACCOUNT_ID);
+    assert.deepEqual(f.calls.restoreOptions, [{ garageStatePolling: true }]);
+    await signIn(f.accounts);
+    assert.deepEqual(f.calls.loginOptions, [{ garageStatePolling: true }]);
+});
 
 test('missing MFA and wrong code can retry with a fresh code; only session token is persisted', async t => {
     const f = fixture({ plans: [

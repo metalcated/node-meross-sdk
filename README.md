@@ -15,7 +15,9 @@ Control Meross devices from Node.js using a **session**, **endpoints**, and **tr
 
 This fork also includes [Meross Connect for Homey](./homey-app/README.md), an
 independent MSG100 garage-opener app with MFA pairing, token-only session restore,
-and a Docker installer for self-hosted Homey. The SDK package API is unchanged.
+and a Docker installer for self-hosted Homey. Existing SDK methods remain
+compatible; this fork adds a read-only garage `poll()` and an opt-in MSG100 state
+polling profile.
 
 Meross products do not share a simple device model. Firmware speaks in protocol namespaces, channels, hub subdevices, and Ability / System.All payloads, and you have to choose LAN HTTP versus cloud MQTT yourself. This package hides that. You log in, walk inventory, and call trait methods. Transports, MQTT, and codecs stay inside the package.
 

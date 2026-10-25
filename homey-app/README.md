@@ -58,6 +58,25 @@ position, an offline opener, or an expired session
 leaves the device unavailable. The SDK uses local HTTP where available, with
 cloud MQTT fallback. Sign-in and initial discovery require the Meross cloud.
 
+Version **0.1.1** refreshes the current contact state after reconnecting and before
+deciding whether a command is already satisfied. During command confirmation it
+requests the actual channel every three seconds, so a missing final push cannot
+leave Homey showing the enrollment snapshot. Normal local background checks run
+at 30-second intervals even when MQTT is connected. All of these checks are GETs;
+they do not repeat an open/close command.
+
+Homey explicitly opts into an MSG100-only state polling profile that requests
+System.All and GarageDoor.State channel 0, the read forms verified on the target
+unit. It does not use the unverified all-channel sentinel or optional configuration
+queries. Other SDK users keep the default polling policy unless they opt in.
+The device ID, capability, Flow cards, account records, and MFA behavior are
+preserved; reinstalling this update does not require pairing again.
+
+Command diagnostics record the failing phase, elapsed time, error code, and stack
+frames without raw response bodies, credentials, or account identifiers. The
+status-refresh defect is covered by regression tests. Elimination of the observed
+10-second live error still requires a command check on Homey after the update.
+
 Homey's persistent app settings hold only the Meross session token and account
 metadata. Passwords and authenticator codes are not persisted, logged, or stored
 in browser storage. App restarts restore the token. Use the device's **Repair**

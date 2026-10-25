@@ -2,9 +2,18 @@
 
 const Homey = require('homey');
 const { CAPABILITY, identity, closedValue, requireGarage, friendlyError } = require('../../lib/garage');
+const { safeCode } = require('../../lib/accounts');
 
 const RETRY_MS = 60000;
 const CONFIRMATION_MS = 45000;
+const CONFIRMATION_POLL_MS = 3000;
+const PUBLIC_MESSAGE = Symbol('MSG100 public message');
+
+function positionError(message) {
+    const error = new Error(message);
+    error[PUBLIC_MESSAGE] = true;
+    return error;
+}
 
 class Msg100Device extends Homey.Device {
     async onInit() {
@@ -111,10 +120,9 @@ class Msg100Device extends Homey.Device {
             endpoint.on('change', change);
             endpoint.on('availability', availability);
             // Enrollment can emit initial readings before these listeners exist.
-            for (const initial of endpoint.snapshot()) {
-                if (initial.trait === 'cover') await this._reportedChange(generation, endpoint, initial.values);
-            }
-            await this._reportedChange(generation, endpoint, {});
+            // Enrollment is only a seed. Do not expose stale ready state before
+            // the current contact position has been read from the opener.
+            await this._refreshPosition(generation, endpoint);
             if (!endpoint.isOnline() || typeof this._reported !== 'boolean') this._scheduleRetry();
             return this._current(generation) && endpoint.isOnline() && typeof this._reported === 'boolean';
         })().catch(async error => {
@@ -128,6 +136,26 @@ class Msg100Device extends Homey.Device {
         return binding;
     }
 
+    async _refreshPosition(generation, endpoint) {
+        if (!this._current(generation) || this._endpoint !== endpoint) throw positionError('The garage connection changed.');
+        const values = await requireGarage(endpoint).poll();
+        if (!this._current(generation) || this._endpoint !== endpoint) throw positionError('The garage connection changed.');
+        if (closedValue(values) === undefined) throw positionError('The MSG100 did not report its current door position.');
+        // An unchanged GETACK deliberately emits no SDK change event. Its fresh
+        // value must still replace Homey's possibly stale capability value.
+        await this._reportedChange(generation, endpoint, values);
+        if (!this._current(generation) || this._endpoint !== endpoint) throw positionError('The garage connection changed.');
+        return values;
+    }
+
+    _commandFailure(stage, error, started) {
+        this.error(`MSG100 ${stage} failed (${safeCode(error)}, ${Date.now() - started}ms).`);
+        // Stack frames identify SDK transport errors versus Homey's own calls.
+        // Never log a raw error message, response body, account ID or credential.
+        const frames = typeof error?.stack === 'string' ? error.stack.split('\n').slice(1, 5).filter(line => /^\s+at /.test(line)) : [];
+        for (const frame of frames) this.error(frame);
+    }
+
     async writeClosed(closed) {
         if (typeof closed !== 'boolean') throw new Error('Choose whether to open or close the garage door.');
         const endpoint = this._endpoint;
@@ -137,45 +165,64 @@ class Msg100Device extends Homey.Device {
         }
         if (this._commandPending) throw new Error('A garage-door command is already in progress. Wait for it to finish.');
         const garage = requireGarage(endpoint);
-        // Repeating an already satisfied request must not pulse the opener again.
-        if (this._reported === closed) return;
         this._commandPending = true;
-        const confirmation = this._waitForPosition(endpoint, generation, closed);
-        let wireSettled = false;
+        let confirmation;
+        let wireSettled = true;
         let finished = false;
+        let stage = 'position read';
+        const started = Date.now();
         const release = () => {
             if (wireSettled && finished) this._commandPending = false;
         };
-        const command = Promise.resolve().then(() => {
-            if (!this._current(generation) || !endpoint.isOnline()) throw new Error('The opener disconnected before the command could be sent.');
-            return closed ? garage.close() : garage.open();
-        }).then(value => {
-            wireSettled = true;
-            confirmation.acknowledge();
-            release();
-            return value;
-        }, error => {
-            wireSettled = true;
-            release();
-            throw error;
-        });
         try {
+            await this._refreshPosition(generation, endpoint);
+            if (!endpoint.isOnline() || typeof this._reported !== 'boolean') throw positionError('The MSG100 did not report its current door position.');
+            // Check a fresh read, not the enrollment snapshot: a door opened by
+            // another client must not make Close look like an already satisfied request.
+            if (this._reported === closed) return;
+            confirmation = this._waitForPosition(endpoint, generation, closed);
+            wireSettled = false;
+            stage = 'command acknowledgment';
+            const command = Promise.resolve().then(() => {
+                if (!this._current(generation) || !endpoint.isOnline()) throw positionError('The opener disconnected before the command could be sent.');
+                return closed ? garage.close() : garage.open();
+            }).then(value => {
+                wireSettled = true;
+                stage = 'position confirmation';
+                this.log?.(`MSG100 command acknowledged after ${Date.now() - started}ms; waiting for reported position.`);
+                confirmation.acknowledge();
+                release();
+                return value;
+            }, error => {
+                wireSettled = true;
+                release();
+                throw error;
+            });
             // Observe reports before sending: a fast PUSH may arrive before SETACK.
             // Promise.all also observes a late wire rejection after cancellation.
             await Promise.all([command, confirmation.promise]);
-            if (!this._current(generation)) throw new Error('The connection changed while sending the command. Check the reported door position.');
+            if (!this._current(generation)) throw positionError('The connection changed while sending the command. Check the reported door position.');
             const reported = garage.values();
             if (!endpoint.isOnline() || closedValue(reported) !== closed) {
-                throw new Error('The door position changed before the command was confirmed. Check the door before trying again.');
+                throw positionError('The door position changed before the command was confirmed. Check the door before trying again.');
             }
             // Homey can apply the requested value after this listener resolves.
             // Resolve only once that value agrees with the opener's actual report.
             await this._reportedChange(generation, endpoint, reported);
             if (!this._current(generation) || !endpoint.isOnline() || closedValue(garage.values()) !== closed) {
-                throw new Error('The connection or door position changed before confirmation completed. Check the door before trying again.');
+                throw positionError('The connection or door position changed before confirmation completed. Check the door before trying again.');
             }
+        } catch (error) {
+            this._commandFailure(stage, error, started);
+            if (error?.[PUBLIC_MESSAGE]) throw error;
+            const message = stage === 'position read'
+                ? 'Could not read the current MSG100 door position. Check its connection and try again.'
+                : 'The MSG100 command failed before its position was confirmed. Check the reported door position before trying again.';
+            const publicError = new Error(message);
+            publicError.code = safeCode(error);
+            throw publicError;
         } finally {
-            confirmation.cleanup();
+            confirmation?.cleanup();
             finished = true;
             release();
         }
@@ -186,6 +233,7 @@ class Msg100Device extends Homey.Device {
         let acknowledged = false;
         let positionSeen = false;
         let timer;
+        let pollTimer;
         let resolve;
         let reject;
         const promise = new Promise((yes, no) => { resolve = yes; reject = no; });
@@ -193,7 +241,9 @@ class Msg100Device extends Homey.Device {
         void promise.catch(() => {});
         const cleanup = () => {
             if (timer) this.homey.clearTimeout(timer);
+            if (pollTimer) this.homey.clearTimeout(pollTimer);
             timer = null;
+            pollTimer = null;
             endpoint.off('change', onChange);
             endpoint.off('availability', onAvailability);
             if (this._confirmation === confirmation) this._confirmation = null;
@@ -207,29 +257,45 @@ class Msg100Device extends Homey.Device {
         };
         const onChange = change => {
             if (!this._current(generation)) {
-                finish(new Error('The connection changed before the door position was confirmed.'));
+                finish(positionError('The connection changed before the door position was confirmed.'));
             } else if (change?.trait === 'cover' && closedValue(change.values) !== undefined) {
                 positionSeen = closedValue(change.values) === closed;
                 if (acknowledged && positionSeen) finish();
             }
         };
         const onAvailability = online => {
-            if (!online) finish(new Error('The MSG100 disconnected before confirming the door position. Check the door before trying again.'));
+            if (!online) finish(positionError('The MSG100 disconnected before confirming the door position. Check the door before trying again.'));
+        };
+        const pollPosition = async () => {
+            pollTimer = null;
+            if (settled || !this._current(generation)) return;
+            const readStarted = Date.now();
+            try {
+                const values = await this._refreshPosition(generation, endpoint);
+                if (settled) return;
+                positionSeen = closedValue(values) === closed;
+                if (acknowledged && positionSeen) finish();
+            } catch (error) {
+                if (!settled && this._current(generation)) this._commandFailure('confirmation read', error, readStarted);
+            } finally {
+                if (!settled && this._current(generation)) pollTimer = this.homey.setTimeout(pollPosition, CONFIRMATION_POLL_MS);
+            }
         };
         const confirmation = {
             promise,
             cleanup,
-            cancel: message => finish(new Error(message)),
+            cancel: message => finish(positionError(message)),
             acknowledge: () => {
                 acknowledged = true;
-                if (!this._current(generation) || !endpoint.isOnline()) finish(new Error('The connection changed before the door position was confirmed.'));
+                if (!this._current(generation) || !endpoint.isOnline()) finish(positionError('The connection changed before the door position was confirmed.'));
                 else if (positionSeen) finish();
             }
         };
         this._confirmation = confirmation;
         endpoint.on('change', onChange);
         endpoint.on('availability', onAvailability);
-        timer = this.homey.setTimeout(() => finish(new Error('The MSG100 did not confirm the door position within 45 seconds. Check the door before trying again.')), CONFIRMATION_MS);
+        timer = this.homey.setTimeout(() => finish(positionError('The MSG100 did not confirm the door position within 45 seconds. Check the door before trying again.')), CONFIRMATION_MS);
+        pollTimer = this.homey.setTimeout(pollPosition, CONFIRMATION_POLL_MS);
         return confirmation;
     }
 

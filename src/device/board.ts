@@ -2,7 +2,14 @@ import type { CloudDevice, CloudSubDevice } from '../cloud';
 import { Endpoint } from './endpoint';
 import { MerossError } from '../errors';
 import type { InventoryRow } from '../inventory';
-import { buildPollJobs } from '../poll';
+import {
+    buildPollJobs,
+    DEFAULT_POLL_INTERVAL_MS,
+    SENSOR_FAST_CLOUD_PERIOD_MS,
+    SYSTEM_ALL_PERIOD_MS,
+    type PollJob
+} from '../poll';
+import { GARAGE_STATE_NAMESPACE } from '../protocol/codecs/cover';
 import {
     ONLINE_NAMESPACE,
     decodeOnlineStatus
@@ -32,6 +39,8 @@ import { Runtime } from './runtime';
  * client. Scoped to this board's uuid by the Session that constructs it.
  */
 export interface BoardDeps {
+    /** Explicit host opt-in; default catalog polling remains unchanged. */
+    garageStatePolling?: boolean;
     request: (options: {
         namespace: string;
         method: string;
@@ -234,7 +243,7 @@ export class Board {
                 ...this.lanBind(physical),
                 onPackedFallback
             }),
-            jobs: buildPollJobs(physical.ability, physical.endpoints, physical.digestNamespaces),
+            jobs: boardPollJobs(physical, this.deps.garageStatePolling ?? false),
             startDelayMs
         });
     }
@@ -271,4 +280,40 @@ export class Board {
             });
         };
     }
+}
+
+/**
+ * Measured MSG100 hardware accepts single-channel Garage.State and All GETs.
+ * Its advertised optional namespaces/all-channel query are not needed for
+ * state tracking. Poll explicitly even while MQTT traffic is present: some
+ * firmware acknowledges movement without sending the final state PUSH.
+ * Keep the same exact model scope as the existing Control.Multiple guard.
+ */
+function boardPollJobs(physical: PhysicalDevice, garageStatePolling: boolean): PollJob[] {
+    if (
+        !garageStatePolling
+        || (
+            physical.model.toLowerCase() !== 'msg100'
+            && physical.system.hardware.type.toLowerCase() !== 'msg100'
+        )
+    ) {
+        return buildPollJobs(physical.ability, physical.endpoints, physical.digestNamespaces);
+    }
+    const jobs: PollJob[] = [{
+        namespace: SYSTEM_ALL_NAMESPACE,
+        strategy: 'smart',
+        periodMs: DEFAULT_POLL_INTERVAL_MS,
+        periodCloudMs: SYSTEM_ALL_PERIOD_MS,
+        payload: EMPTY_PAYLOAD
+    }];
+    if (GARAGE_STATE_NAMESPACE in physical.ability) {
+        jobs.push({
+            namespace: GARAGE_STATE_NAMESPACE,
+            strategy: 'smart',
+            periodMs: DEFAULT_POLL_INTERVAL_MS,
+            periodCloudMs: SENSOR_FAST_CLOUD_PERIOD_MS,
+            payload: { state: { channel: 0 } }
+        });
+    }
+    return jobs;
 }

@@ -1,6 +1,6 @@
 {
   "name": "homey-meross-connect",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "description": "Meross Connect for Homey with authenticator login and persistent sessions",
   "main": "app.js",

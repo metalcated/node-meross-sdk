@@ -528,7 +528,7 @@ export class Poller {
 
         if (!skipAll) {
             const allJob = this.jobs.get(SYSTEM_ALL_NAMESPACE);
-            if (allJob) {
+            if (allJob?.strategy === 'all') {
                 // Cloud-only devices never had a host; only probe when HTTP
                 // had been preferred and then dropped.
                 const due = allJob.nextMs === null

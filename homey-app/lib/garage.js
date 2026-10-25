@@ -67,7 +67,7 @@ function closedValue(values) {
 function requireGarage(endpoint) {
     if (endpoint?.cover?.kind !== 'garage'
         || typeof endpoint.cover.open !== 'function' || typeof endpoint.cover.close !== 'function'
-        || typeof endpoint.cover.values !== 'function') {
+        || typeof endpoint.cover.values !== 'function' || typeof endpoint.cover.poll !== 'function') {
         throw new Error('This endpoint does not report an MSG100 garage-door control.');
     }
     return endpoint.cover;

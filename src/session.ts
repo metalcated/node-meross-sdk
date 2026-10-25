@@ -45,6 +45,12 @@ export interface SessionOptions {
     mqttConnect?: MqttConnectFn;
     lanFetch?: typeof globalThis.fetch;
     /**
+     * Opt in to channel-specific MSG100 contact-state reads every LAN tick,
+     * limited to System.All and Garage.State. Default catalog polling is
+     * unchanged when omitted, including optional configuration refreshes.
+     */
+    garageStatePolling?: boolean;
+    /**
      * Single host sink. Not a field on {@link CloudClientOptions}; login/restore
      * copy it onto the internal cloud client so sign-in is visible.
      */
@@ -147,6 +153,7 @@ export class Session extends EventEmitter<SessionEvents> {
     private token: TokenData;
     private readonly mqttConnect?: MqttConnectFn;
     private readonly lanFetch?: typeof globalThis.fetch;
+    private readonly garageStatePolling: boolean;
     private readonly logger?: SessionLogger;
     private readonly logLevel?: LogLevel;
     /** One board per enrolled physical uuid. */
@@ -203,6 +210,7 @@ export class Session extends EventEmitter<SessionEvents> {
         this.cloud = cloud;
         this.mqttConnect = options.mqttConnect;
         this.lanFetch = options.lanFetch;
+        this.garageStatePolling = options.garageStatePolling ?? false;
         this.logger = options.logger;
         this.logLevel = options.logLevel;
         this.inventory = new Inventory();
@@ -636,6 +644,7 @@ export class Session extends EventEmitter<SessionEvents> {
                     return { status: 'enrolled', uuid };
                 }
                 const board = new Board(uuid, {
+                    garageStatePolling: this.garageStatePolling,
                     request: (options) => this.connectedRouter.request({
                         uuid,
                         ...options
