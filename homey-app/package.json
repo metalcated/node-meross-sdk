@@ -1,0 +1,25 @@
+{
+  "name": "homey-meross-connect",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Meross Connect for Homey with authenticator login and persistent sessions",
+  "main": "app.js",
+  "license": "MIT",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.cjs",
+    "lint": "node scripts/check-syntax.cjs",
+    "validate": "homey app validate --level debug",
+    "build": "homey app build",
+    "check:package": "node scripts/check-package.cjs"
+  },
+  "dependencies": {
+    "node-meross-sdk": "0.6.0-alpha"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/metalcated/node-meross-sdk.git"
+  }
+}

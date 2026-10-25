@@ -1,0 +1,4 @@
+.homeybuild/
+.homey/
+node_modules/
+env.json

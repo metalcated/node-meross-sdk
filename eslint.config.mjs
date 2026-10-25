@@ -7,7 +7,9 @@ export default tseslint.config(
             'node_modules/**',
             'dist/**',
             'coverage/**',
-            'docs/**'
+            'docs/**',
+            // The independently packaged Homey app has its own syntax and lifecycle checks.
+            'homey-app/**'
         ]
     },
     eslint.configs.recommended,

@@ -1,0 +1,14 @@
+.git
+**/node_modules
+**/.homeybuild
+**/.homey
+**/.env
+**/.env.*
+**/env.json
+**/*.log
+**/*.tgz
+**/__pycache__
+**/*.pyc
+**/.DS_Store
+dist
+coverage

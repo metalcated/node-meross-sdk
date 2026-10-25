@@ -1,0 +1,121 @@
+<style>
+    .meross-intro { margin-bottom: 24px; }
+    .meross-message { margin: 16px 0; }
+    .meross-error { color: var(--homey-color-danger, #d64545); }
+    .meross-actions { display: grid; gap: 12px; margin-top: 24px; }
+    [hidden] { display: none !important; }
+</style>
+
+<p class="meross-intro">Sign in to the Meross account that owns your MSG100. If your account uses two-factor authentication, enter the current code when asked.</p>
+<form id="meross-login" class="homey-form">
+    <div class="homey-form-group">
+        <label class="homey-form-label" for="email">Meross email address</label>
+        <input class="homey-form-input" id="email" type="email" autocomplete="username" required />
+    </div>
+    <div class="homey-form-group">
+        <label class="homey-form-label" for="password">Password</label>
+        <input class="homey-form-input" id="password" type="password" autocomplete="current-password" required />
+    </div>
+    <div class="homey-form-group" id="mfa-group" hidden>
+        <label class="homey-form-label" for="mfa-code">Authenticator code</label>
+        <input class="homey-form-input" id="mfa-code" type="text" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" aria-describedby="mfa-help" />
+        <p id="mfa-help">Enter the current six-digit code from your authenticator app.</p>
+    </div>
+    <p id="login-error" class="meross-message meross-error" role="alert" hidden></p>
+    <p id="login-status" class="meross-message" role="status" aria-live="polite"></p>
+    <div class="meross-actions">
+        <button id="continue" class="homey-button-primary-full" type="submit">Continue</button>
+        <button id="cancel" class="homey-button-secondary-full" type="button">Cancel</button>
+    </div>
+</form>
+
+<script>
+(() => {
+    'use strict';
+    const form = document.getElementById('meross-login');
+    const email = document.getElementById('email');
+    const password = document.getElementById('password');
+    const code = document.getElementById('mfa-code');
+    const mfa = document.getElementById('mfa-group');
+    const error = document.getElementById('login-error');
+    const status = document.getElementById('login-status');
+    const submit = document.getElementById('continue');
+    const cancel = document.getElementById('cancel');
+    let context = { repair: false };
+    let pending = false;
+    let cancelled = false;
+
+    const showError = message => {
+        error.textContent = message;
+        error.hidden = false;
+    };
+    const clearSecrets = () => { password.value = ''; code.value = ''; };
+    const setPending = value => {
+        pending = value;
+        submit.disabled = value;
+        email.disabled = value;
+        password.disabled = value;
+        code.disabled = value;
+        submit.textContent = value ? 'Connecting…' : 'Continue';
+        status.textContent = value ? 'Connecting to Meross…' : '';
+    };
+
+    Homey.setTitle('Connect your Meross account');
+    setPending(true);
+    Homey.emit('getContext').then(value => {
+        if (cancelled) return;
+        context = value || context;
+        if (context.email) email.value = context.email;
+        setPending(false);
+    }).catch(() => {
+        if (cancelled) return;
+        status.textContent = '';
+        showError('The connection screen could not start. Close it and try again.');
+    });
+
+    form.addEventListener('submit', async event => {
+        event.preventDefault();
+        if (pending || cancelled || !form.reportValidity()) return;
+        error.hidden = true;
+        setPending(true);
+        try {
+            const result = await Homey.emit('login', {
+                email: email.value.trim(),
+                password: password.value,
+                ...(mfa.hidden ? {} : { mfaCode: code.value.trim() })
+            });
+            if (cancelled) return;
+            if (result?.status === 'mfa_required' || result?.status === 'mfa_wrong') {
+                mfa.hidden = false;
+                code.required = true;
+                code.value = '';
+                setPending(false);
+                if (result.status === 'mfa_wrong') showError('That code was not accepted. Enter a fresh code and try again.');
+                else status.textContent = 'Your account requires an authenticator code.';
+                code.focus();
+                return;
+            }
+            if (result?.status !== 'ok') throw new Error('The login did not complete. Please try again.');
+            clearSecrets();
+            if (context.repair) {
+                status.textContent = result.offline ? 'Account repaired. The garage opener will reconnect when it is available.' : 'Account repaired.';
+                await Homey.done();
+            } else {
+                await Homey.showView('list_devices');
+            }
+        } catch (caught) {
+            if (!cancelled) showError(caught?.message || 'Could not connect. Please try again.');
+        } finally {
+            if (!cancelled && pending) setPending(false);
+        }
+    });
+
+    cancel.addEventListener('click', async () => {
+        cancelled = true;
+        clearSecrets();
+        cancel.disabled = true;
+        try { await Homey.emit('cancel_login'); } catch { /* Closing the modal also cancels the backend session. */ }
+        await Homey.done();
+    });
+})();
+</script>

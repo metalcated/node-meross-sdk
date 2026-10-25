@@ -1,0 +1,30 @@
+{
+  "id": "com.metalcated.meross",
+  "version": "0.1.0",
+  "compatibility": ">=13.0.0",
+  "runtime": "nodejs",
+  "sdk": 3,
+  "platforms": ["local"],
+  "name": { "en": "Meross Connect" },
+  "description": { "en": "Connect your Meross garage opener with authenticator sign-in" },
+  "category": ["security"],
+  "brandColor": "#147D73",
+  "author": { "name": "metalcated" },
+  "permissions": [],
+  "drivers": [
+    {
+      "id": "msg100",
+      "name": { "en": "MSG100 Smart Garage Door Opener" },
+      "class": "garagedoor",
+      "platforms": ["local"],
+      "connectivity": ["lan", "cloud"],
+      "capabilities": ["garagedoor_closed"],
+      "pair": [
+        { "id": "connect", "navigation": { "next": "list_devices" } },
+        { "id": "list_devices", "template": "list_devices", "navigation": { "next": "add_devices" } },
+        { "id": "add_devices", "template": "add_devices" }
+      ],
+      "repair": [{ "id": "connect" }]
+    }
+  ]
+}
